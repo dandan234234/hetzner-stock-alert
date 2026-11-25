@@ -1,3 +1,4 @@
+
 name: Hetzner CX33 Stock Monitor
 
 on:
@@ -5,40 +6,103 @@ on:
     - cron: '*/5 * * * *'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   check-stock:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Check availability
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check CX33 availability
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python - <<'PY'
-          import json, urllib.request, os
+          import json
+          import os
+          import urllib.request
+          from pathlib import Path
 
-          url = "https://api.hetzner.cloud/v1/datacenters"
-          req = urllib.request.Request(url)
-          with urllib.request.urlopen(req) as r:
-              data = json.load(r)
+          url = "https://hetzner.thegoated.dev/api/availability"
 
-          locations = {"fsn1": "Falkenstein", "nbg1": "Nuremberg"}
-          found = []
+          req = urllib.request.Request(
+              url, headers={"User-Agent": "CX33-stock-monitor/1.0"}
+          )
 
-          for dc in data["datacenters"]:
-              name = dc["name"]
-              if name in locations:
-                  available = dc["server_types"]["available"]
-                  if 115 in available:
-                      found.append(locations[name])
+          with urllib.request.urlopen(req, timeout=30) as response:
+              data = json.load(response)
 
-          if found:
-              message = "🚨 CX33 DISPONIBLE en: " + ", ".join(found)
-              url = "https://api.telegram.org/bot" + os.environ["TELEGRAM_BOT_TOKEN"] + "/sendMessage"
+          cx33 = next(
+              server
+              for family in data["families"]
+              for server in family["types"]
+              if server["code"] == "CX33"
+          )
+
+          stock = cx33["stock"]
+          locations = ["FSN1", "NBG1"]
+
+          available = [
+              location for location in locations
+              if stock.get(location) in ("available", "limited")
+          ]
+
+          state_file = Path("cx33_state.json")
+          previous = json.loads(state_file.read_text()) if state_file.exists() else {}
+
+          current = {loc: stock.get(loc, "unknown") for loc in locations}
+
+          newly_available = [
+              loc for loc in locations
+              if current[loc] in ("available", "limited")
+              and previous.get(loc) not in ("available", "limited")
+          ]
+
+          if newly_available:
+              message = (
+                  "🚨 ¡HETZNER CX33 DISPONIBLE!\n\n"
+                  + "\n".join(
+                      f"{loc}: {current[loc]}" for loc in newly_available
+                  )
+                  + "\n\n¡Comprueba el servidor ahora!"
+              )
+
+              api = (
+                  "https://api.telegram.org/bot"
+                  + os.environ["TELEGRAM_BOT_TOKEN"]
+                  + "/sendMessage"
+              )
+
               payload = json.dumps({
                   "chat_id": os.environ["TELEGRAM_CHAT_ID"],
                   "text": message
               }).encode()
-              req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
-              urllib.request.urlopen(req)
+
+              request = urllib.request.Request(
+                  api, data=payload,
+                  headers={"Content-Type": "application/json"}
+              )
+
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  print(response.read().decode())
+
+          state_file.write_text(json.dumps(current, indent=2))
+          print("Estado actual:", current)
           PY
+
+      - name: Save availability state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add cx33_state.json
+          git diff --cached --quiet || (
+            git commit -m "Update CX33 stock state" &&
+            git push
+          )
