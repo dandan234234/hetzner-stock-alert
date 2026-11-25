@@ -27,49 +27,73 @@ jobs:
           python - <<'PY'
           import json
           import os
+          import time
           import urllib.request
           from pathlib import Path
 
           url = "https://hetzner.thegoated.dev/api/availability"
 
-          req = urllib.request.Request(
-              url, headers={"User-Agent": "CX33-stock-monitor/1.0"}
-          )
+          def check_stock():
+              req = urllib.request.Request(
+                  url, headers={"User-Agent": "CX33-stock-monitor/1.0"}
+              )
 
-          with urllib.request.urlopen(req, timeout=30) as response:
-              data = json.load(response)
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  data = json.load(response)
 
-          cx33 = next(
-              server
-              for family in data["families"]
-              for server in family["types"]
-              if server["code"] == "CX33"
-          )
+              cx33 = next(
+                  server
+                  for family in data["families"]
+                  for server in family["types"]
+                  if server["code"] == "CX33"
+              )
 
-          stock = cx33["stock"]
+              return cx33["stock"]
+
           locations = ["FSN1", "NBG1"]
 
-          available = [
-              location for location in locations
-              if stock.get(location) in ("available", "limited")
-          ]
+          # Primera comprobación
+          first_check = check_stock()
+          print("Primera comprobación:", first_check)
+
+          # Esperar 10 segundos
+          time.sleep(10)
+
+          # Segunda comprobación
+          second_check = check_stock()
+          print("Segunda comprobación:", second_check)
 
           state_file = Path("cx33_state.json")
-          previous = json.loads(state_file.read_text()) if state_file.exists() else {}
+          previous = (
+              json.loads(state_file.read_text())
+              if state_file.exists() else {}
+          )
 
-          current = {loc: stock.get(loc, "unknown") for loc in locations}
+          current = {}
+
+          for loc in locations:
+              first = first_check.get(loc, "unknown")
+              second = second_check.get(loc, "unknown")
+
+              # Solo dos confirmaciones exactas de available
+              if first == "available" and second == "available":
+                  current[loc] = "available"
+              elif second == "available":
+                  current[loc] = "unconfirmed"
+              else:
+                  current[loc] = second
 
           newly_available = [
               loc for loc in locations
-              if current[loc] in ("available", "limited")
-              and previous.get(loc) not in ("available", "limited")
+              if current[loc] == "available"
+              and previous.get(loc) != "available"
           ]
 
           if newly_available:
               message = (
                   "🚨 ¡HETZNER CX33 DISPONIBLE!\n\n"
                   + "\n".join(
-                      f"{loc}: {current[loc]}" for loc in newly_available
+                      f"{loc}: AVAILABLE" for loc in newly_available
                   )
                   + "\n\n¡Comprueba el servidor ahora!"
               )
@@ -86,7 +110,8 @@ jobs:
               }).encode()
 
               request = urllib.request.Request(
-                  api, data=payload,
+                  api,
+                  data=payload,
                   headers={"Content-Type": "application/json"}
               )
 
@@ -94,9 +119,12 @@ jobs:
                   print(response.read().decode())
 
           state_file.write_text(json.dumps(current, indent=2))
+
+          print("Estado anterior:", previous)
           print("Estado actual:", current)
+          print("Nuevas disponibilidades:", newly_available)
           PY
-     
+
       - name: Save availability state
         run: |
           git config user.name "github-actions[bot]"
