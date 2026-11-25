@@ -96,14 +96,7 @@ jobs:
           state_file.write_text(json.dumps(current, indent=2))
           print("Estado actual:", current)
           PY
-      - name: Test Telegram
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -d chat_id="${TELEGRAM_CHAT_ID}" \
-            -d text="Prueba correcta: Telegram funciona"
+     
       - name: Save availability state
         run: |
           git config user.name "github-actions[bot]"
