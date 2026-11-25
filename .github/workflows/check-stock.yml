@@ -1,0 +1,44 @@
+name: Hetzner CX33 Stock Monitor
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  check-stock:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check availability
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python - <<'PY'
+          import json, urllib.request, os
+
+          url = "https://api.hetzner.cloud/v1/datacenters"
+          req = urllib.request.Request(url)
+          with urllib.request.urlopen(req) as r:
+              data = json.load(r)
+
+          locations = {"fsn1": "Falkenstein", "nbg1": "Nuremberg"}
+          found = []
+
+          for dc in data["datacenters"]:
+              name = dc["name"]
+              if name in locations:
+                  available = dc["server_types"]["available"]
+                  if 115 in available:
+                      found.append(locations[name])
+
+          if found:
+              message = "🚨 CX33 DISPONIBLE en: " + ", ".join(found)
+              url = "https://api.telegram.org/bot" + os.environ["TELEGRAM_BOT_TOKEN"] + "/sendMessage"
+              payload = json.dumps({
+                  "chat_id": os.environ["TELEGRAM_CHAT_ID"],
+                  "text": message
+              }).encode()
+              req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+              urllib.request.urlopen(req)
+          PY
